@@ -8,7 +8,7 @@ use sdl2::{
 };
 
 use amethyst_core::{
-    ecs::prelude::{Resources, RunNow, SystemData, Write},
+    ecs::prelude::{RunNow, SystemData, World, Write},
     shrev::EventChannel,
 };
 
@@ -69,8 +69,8 @@ type SdlEventsData<'a, T> = (
 );
 
 impl<'a, T: BindingTypes> RunNow<'a> for SdlEventsSystem<T> {
-    fn run_now(&mut self, res: &'a Resources) {
-        let (mut handler, mut output) = SdlEventsData::fetch(res);
+    fn run_now(&mut self, world: &'a World) {
+        let (mut handler, mut output) = SdlEventsData::fetch(world);
 
         let mut event_pump = self
             .event_pump
@@ -83,15 +83,15 @@ impl<'a, T: BindingTypes> RunNow<'a> for SdlEventsSystem<T> {
         self.event_pump = Some(event_pump);
     }
 
-    fn setup(&mut self, res: &mut Resources) {
-        let (mut handler, mut output) = SdlEventsData::fetch(res);
-        self.initialize_controllers(&mut handler, &mut output);
-    }
+    fn setup(&mut self, _world: &mut World) {}
 }
 
 impl<T: BindingTypes> SdlEventsSystem<T> {
     /// Creates a new instance of this system with the provided controller mappings.
-    pub fn new(mappings: Option<ControllerMappings>) -> Result<Self, SdlSystemError> {
+    pub fn new(
+        world: &mut World,
+        mappings: Option<ControllerMappings>,
+    ) -> Result<Self, SdlSystemError> {
         let sdl_context = sdl2::init().map_err(SdlSystemError::ContextInit)?;
         let event_pump = sdl_context
             .event_pump()
@@ -114,13 +114,16 @@ impl<T: BindingTypes> SdlEventsSystem<T> {
             None => {}
         };
 
-        Ok(SdlEventsSystem {
+        let mut sys = SdlEventsSystem {
             sdl_context,
             event_pump: Some(event_pump),
             controller_subsystem,
             opened_controllers: vec![],
             marker: PhantomData,
-        })
+        };
+        let (mut handler, mut output) = SdlEventsData::fetch(world);
+        sys.initialize_controllers(&mut handler, &mut output);
+        Ok(sys)
     }
 
     fn handle_sdl_event(

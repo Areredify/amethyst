@@ -1,6 +1,6 @@
 use crate::{
     ecs::prelude::{
-        BitSet, ComponentEvent, ReadExpect, ReadStorage, ReaderId, Resources, System, WriteStorage,
+        BitSet, ComponentEvent, ReadExpect, ReadStorage, ReaderId, System, World, WriteStorage,
     },
     transform::components::{HierarchyEvent, Parent, ParentHierarchy},
 };
@@ -16,13 +16,28 @@ use crate::HiddenPropagate;
 /// This system adds a [HiddenPropagate](struct.HiddenPropagate.html)-component to all children.
 /// Using this system will result in every child being hidden.
 /// Depends on the resource "ParentHierarchy", which is set up by the [TransformBundle](struct.TransformBundle.html)
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct HideHierarchySystem {
     marked_as_modified: BitSet,
+    hidden_events_id: ReaderId<ComponentEvent>,
+    parent_events_id: ReaderId<HierarchyEvent>,
+}
 
-    hidden_events_id: Option<ReaderId<ComponentEvent>>,
-
-    parent_events_id: Option<ReaderId<HierarchyEvent>>,
+impl HideHierarchySystem {
+    /// Creates a new `HideHierarchySystem`.
+    pub fn new(mut world: &mut World) -> Self {
+        use crate::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        // This fetch_mut panics if `ParentHierarchy` is not set up yet, hence the dependency on "parent_hierarchy_system"
+        let parent_events_id = world.fetch_mut::<ParentHierarchy>().track();
+        let mut hidden = WriteStorage::<HiddenPropagate>::fetch(&world);
+        let hidden_events_id = hidden.register_reader();
+        Self {
+            marked_as_modified: BitSet::default(),
+            hidden_events_id,
+            parent_events_id,
+        }
+    }
 }
 
 impl<'a> System<'a> for HideHierarchySystem {
@@ -38,9 +53,7 @@ impl<'a> System<'a> for HideHierarchySystem {
         self.marked_as_modified.clear();
 
         // Borrow multiple parts of self as mutable
-        let self_hidden_events_id = &mut self.hidden_events_id.as_mut().expect(
-            "`HideHierarchySystem::setup` was not called before `HideHierarchySystem::run`",
-        );
+        let self_hidden_events_id = &mut self.hidden_events_id;
         let self_marked_as_modified = &mut self.marked_as_modified;
 
         hidden
@@ -53,12 +66,7 @@ impl<'a> System<'a> for HideHierarchySystem {
                 ComponentEvent::Modified(_id) => {}
             });
 
-        for event in hierarchy
-            .changed()
-            .read(&mut self.parent_events_id.as_mut().expect(
-                "`HideHierarchySystem::setup` was not called before `HideHierarchySystem::run`",
-            ))
-        {
+        for event in hierarchy.changed().read(&mut self.parent_events_id) {
             match *event {
                 HierarchyEvent::Removed(entity) => {
                     self_marked_as_modified.add(entity.id());
@@ -118,14 +126,5 @@ impl<'a> System<'a> for HideHierarchySystem {
                     ComponentEvent::Modified(_id) => {}
                 });
         }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        use crate::ecs::prelude::SystemData;
-        Self::SystemData::setup(res);
-        // This fetch_mut panics if `ParentHierarchy` is not set up yet, hence the dependency on "parent_hierarchy_system"
-        self.parent_events_id = Some(res.fetch_mut::<ParentHierarchy>().track());
-        let mut hidden = WriteStorage::<HiddenPropagate>::fetch(res);
-        self.hidden_events_id = Some(hidden.register_reader());
     }
 }

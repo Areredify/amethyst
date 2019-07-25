@@ -4,7 +4,7 @@ use amethyst::{
     assets::{PrefabLoader, PrefabLoaderSystem, Processor, RonFormat},
     audio::{output::init_output, Source},
     core::{frame_limiter::FrameRateLimitStrategy, transform::TransformBundle, Time},
-    ecs::prelude::{Entity, System, Write},
+    ecs::prelude::{Entity, System, World, WorldExt, Write},
     input::{is_close_requested, is_key_down, InputBundle, StringBindings},
     prelude::*,
     renderer::{
@@ -34,13 +34,13 @@ struct Example {
 
 impl SimpleState for Example {
     fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
-        let StateData { world, .. } = data;
+        let StateData { mut world, .. } = data;
         // Initialise the scene with an object, a light and a camera.
         let handle = world.exec(|loader: PrefabLoader<'_, MyPrefabData>| {
             loader.load("prefab/sphere.ron", RonFormat, ())
         });
         world.create_entity().with(handle).build();
-        init_output(&mut world.res);
+        init_output(&mut world);
         world.exec(|mut creator: UiCreator<'_>| {
             creator.create("ui/example.ron", ());
         });
@@ -125,26 +125,29 @@ fn main() -> amethyst::Result<()> {
     let app_root = application_root_dir()?;
 
     let display_config_path = app_root.join("examples/ui/config/display.ron");
-    let assets_directory = app_root.join("examples/assets");
+    let assets_dir = app_root.join("examples/assets");
+
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
 
     let game_data = GameDataBuilder::default()
-        .with(PrefabLoaderSystem::<MyPrefabData>::default(), "", &[])
-        .with_bundle(TransformBundle::new())?
-        .with_bundle(UiBundle::<StringBindings>::new())?
-        .with(Processor::<Source>::new(), "source_processor", &[])
-        .with(UiEventHandlerSystem::new(), "ui_event_handler", &[])
-        .with_bundle(FpsCounterBundle::default())?
-        .with_bundle(InputBundle::<StringBindings>::new())?
+        .with(PrefabLoaderSystem::<MyPrefabData>::new(&mut world), "", &[])
         .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(
                     RenderToWindow::from_config_path(display_config_path)
                         .with_clear([0.34, 0.36, 0.52, 1.0]),
                 )
                 .with_plugin(RenderUi::default()),
-        )?;
+        )?
+        .with_bundle(&mut world, TransformBundle::new())?
+        .with_bundle(&mut world, UiBundle::<StringBindings>::new())?
+        .with(Processor::<Source>::new(), "source_processor", &[])
+        .with(UiEventHandlerSystem::new(), "ui_event_handler", &[])
+        .with_bundle(&mut world, FpsCounterBundle::default())?
+        .with_bundle(&mut world, InputBundle::<StringBindings>::new())?;
 
-    let mut game = Application::build(assets_directory, Example::default())?
+    let mut game = Application::build(Example::default(), world)?
         // Unlimited FPS
         .with_frame_limit(FrameRateLimitStrategy::Unlimited, 9999)
         .build(game_data)?;

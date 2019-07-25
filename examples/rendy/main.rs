@@ -13,7 +13,7 @@ use amethyst::{
     core::{
         ecs::{
             Component, DenseVecStorage, DispatcherBuilder, Entities, Entity, Join, Read,
-            ReadStorage, Resources, System, SystemData, Write, WriteStorage,
+            ReadExpect, ReadStorage, System, SystemData, World, Write, WriteStorage,
         },
         math::{Unit, UnitQuaternion, Vector3},
         Time, Transform, TransformBundle,
@@ -324,11 +324,11 @@ impl SimpleState for Example {
             .with(FlyControlTag)
             .build();
 
-        world.add_resource(ActiveCamera {
+        world.insert(ActiveCamera {
             entity: Some(camera),
         });
-        world.add_resource(RenderMode::default());
-        world.add_resource(DebugLines::new());
+        world.insert(RenderMode::default());
+        world.insert(DebugLines::new());
     }
 
     fn handle_event(
@@ -568,7 +568,9 @@ fn main() -> amethyst::Result<()> {
         .join("rendy")
         .join("config")
         .join("display.ron");
-    let assets_directory = app_root.join("examples").join("assets");
+    let assets_dir = app_root.join("examples").join("assets");
+
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
 
     let mut bindings = Bindings::new();
     bindings.insert_axis(
@@ -596,30 +598,36 @@ fn main() -> amethyst::Result<()> {
     let game_data = GameDataBuilder::default()
         .with(OrbitSystem, "orbit", &[])
         .with(AutoFovSystem::default(), "auto_fov", &[])
-        .with_bundle(FpsCounterBundle::default())?
+        .with_bundle(&mut world, FpsCounterBundle::default())?
         .with(
-            PrefabLoaderSystem::<ScenePrefabData>::default(),
+            PrefabLoaderSystem::<ScenePrefabData>::new(&mut world),
             "scene_loader",
             &[],
         )
         .with(
-            GltfSceneLoaderSystem::default(),
+            GltfSceneLoaderSystem::new(&mut world),
             "gltf_loader",
             &["scene_loader"], // This is important so that entity instantiation is performed in a single frame.
         )
         .with_bundle(
+            &mut world,
             AnimationBundle::<usize, Transform>::new("animation_control", "sampler_interpolation")
                 .with_dep(&["gltf_loader"]),
         )?
         .with_bundle(
+            &mut world,
             AnimationBundle::<SpriteAnimationId, SpriteRender>::new(
                 "sprite_animation_control",
                 "sprite_sampler_interpolation",
             )
             .with_dep(&["gltf_loader"]),
         )?
-        .with_bundle(InputBundle::<StringBindings>::new().with_bindings(bindings))?
         .with_bundle(
+            &mut world,
+            InputBundle::<StringBindings>::new().with_bindings(bindings),
+        )?
+        .with_bundle(
+            &mut world,
             FlyControlBundle::<StringBindings>::new(
                 Some("horizontal".into()),
                 None,
@@ -628,20 +636,27 @@ fn main() -> amethyst::Result<()> {
             .with_sensitivity(0.1, 0.1)
             .with_speed(5.),
         )?
-        .with_bundle(TransformBundle::new().with_dep(&[
-            "animation_control",
-            "sampler_interpolation",
-            "sprite_animation_control",
-            "sprite_sampler_interpolation",
-            "fly_movement",
-            "orbit",
-        ]))?
-        .with_bundle(VertexSkinningBundle::new().with_dep(&[
-            "transform_system",
-            "animation_control",
-            "sampler_interpolation",
-        ]))?
         .with_bundle(
+            &mut world,
+            TransformBundle::new().with_dep(&[
+                "animation_control",
+                "sampler_interpolation",
+                "sprite_animation_control",
+                "sprite_sampler_interpolation",
+                "fly_movement",
+                "orbit",
+            ]),
+        )?
+        .with_bundle(
+            &mut world,
+            VertexSkinningBundle::new().with_dep(&[
+                "transform_system",
+                "animation_control",
+                "sampler_interpolation",
+            ]),
+        )?
+        .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(RenderToWindow::from_config_path(display_config_path))
                 .with_plugin(RenderSwitchable3D::default())
@@ -653,7 +668,7 @@ fn main() -> amethyst::Result<()> {
                 )),
         )?;
 
-    let mut game = Application::new(&assets_directory, Example::new(), game_data)?;
+    let mut game = Application::new(&assets_directory, Example::new(), game_data, world)?;
     game.run();
     Ok(())
 }
@@ -667,12 +682,16 @@ struct RenderSwitchable3D {
 }
 
 impl RenderPlugin<DefaultBackend> for RenderSwitchable3D {
-    fn on_build<'a, 'b>(&mut self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
-        <RenderPbr3D as RenderPlugin<DefaultBackend>>::on_build(&mut self.pbr, builder)
+    fn on_build<'a, 'b>(
+        &mut self,
+        world: &mut World,
+        builder: &mut DispatcherBuilder<'a, 'b>,
+    ) -> Result<(), Error> {
+        <RenderPbr3D as RenderPlugin<DefaultBackend>>::on_build(&mut self.pbr, world, builder)
     }
 
-    fn should_rebuild(&mut self, res: &Resources) -> bool {
-        let mode = *<Read<'_, RenderMode>>::fetch(res);
+    fn should_rebuild(&mut self, world: &World) -> bool {
+        let mode = *<Read<'_, RenderMode>>::fetch(world);
         self.last_mode != mode
     }
 
@@ -680,14 +699,14 @@ impl RenderPlugin<DefaultBackend> for RenderSwitchable3D {
         &mut self,
         plan: &mut RenderPlan<DefaultBackend>,
         factory: &mut Factory<DefaultBackend>,
-        res: &Resources,
+        world: &World,
     ) -> Result<(), Error> {
-        let mode = *<Read<'_, RenderMode>>::fetch(res);
+        let mode = *<Read<'_, RenderMode>>::fetch(world);
         self.last_mode = mode;
         match mode {
-            RenderMode::Pbr => self.pbr.on_plan(plan, factory, res),
-            RenderMode::Shaded => self.shaded.on_plan(plan, factory, res),
-            RenderMode::Flat => self.flat.on_plan(plan, factory, res),
+            RenderMode::Pbr => self.pbr.on_plan(plan, factory, world),
+            RenderMode::Shaded => self.shaded.on_plan(plan, factory, world),
+            RenderMode::Flat => self.flat.on_plan(plan, factory, world),
         }
     }
 }

@@ -5,7 +5,7 @@ use amethyst::{
         transform::{Transform, TransformBundle},
         Time,
     },
-    ecs::{Read, ReadExpect, System, Write},
+    ecs::{Read, ReadExpect, System, World, WorldExt, Write},
     prelude::*,
     renderer::{
         camera::Camera,
@@ -20,6 +20,15 @@ use amethyst::{
 };
 
 struct ExampleLinesSystem;
+
+impl ExampleLinesSystem {
+    pub fn new(world: &mut World) -> Self {
+        use amethyst::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(world);
+        Self
+    }
+}
+
 impl<'s> System<'s> for ExampleLinesSystem {
     type SystemData = (
         ReadExpect<'s, ScreenDimensions>,
@@ -47,10 +56,9 @@ struct ExampleState;
 impl SimpleState for ExampleState {
     fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
         // Setup debug lines as a resource
-        data.world.add_resource(DebugLines::new());
+        data.world.insert(DebugLines::new());
         // Configure width of lines. Optional step
-        data.world
-            .add_resource(DebugLinesParams { line_width: 2.0 });
+        data.world.insert(DebugLinesParams { line_width: 2.0 });
 
         // Setup debug lines as a component and add lines to render axis&grid
         let mut debug_lines_component = DebugLinesComponent::new();
@@ -104,21 +112,28 @@ fn main() -> amethyst::Result<()> {
     let app_root = application_root_dir()?;
 
     let display_config_path = app_root.join("examples/debug_lines_ortho/config/display.ron");
-    let assets_directory = app_root.join("examples/assets/");
+    let assets_dir = app_root.join("examples/assets/");
+
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
 
     let game_data = GameDataBuilder::default()
-        .with_bundle(TransformBundle::new())?
-        .with(ExampleLinesSystem, "example_lines_system", &[])
+        .with(
+            ExampleLinesSystem::new(&mut world),
+            "example_lines_system",
+            &[],
+        )
         .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(
                     RenderToWindow::from_config_path(display_config_path)
                         .with_clear([0.0, 0.0, 0.0, 1.0]),
                 )
                 .with_plugin(RenderDebugLines::default()),
-        )?;
+        )?
+        .with_bundle(&mut world, TransformBundle::new())?;
 
-    let mut game = Application::new(assets_directory, ExampleState, game_data)?;
+    let mut game = Application::new(ExampleState, game_data, world)?;
     game.run();
     Ok(())
 }

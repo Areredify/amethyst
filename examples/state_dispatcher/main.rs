@@ -1,7 +1,7 @@
 //! An example showing how to create a dispatcher inside of a State.
 
 use amethyst::{
-    ecs::{Dispatcher, DispatcherBuilder},
+    ecs::{Dispatcher, DispatcherBuilder, World, WorldExt},
     prelude::*,
     shrev::EventChannel,
     Error,
@@ -46,14 +46,15 @@ impl<'a> Default for StateB<'a> {
 impl<'a> SimpleState for StateB<'a> {
     fn update(&mut self, data: &mut StateData<'_, GameData<'_, '_>>) -> SimpleTrans {
         println!("StateB::update()");
-        self.dispatcher.dispatch(&data.world.res);
+        self.dispatcher.dispatch(&data.world);
         Trans::Quit
     }
 }
 
 fn main() -> Result<(), Error> {
     amethyst::start_logger(Default::default());
-    let mut game = Application::build("./", StateA)?.build(GameDataBuilder::default())?;
+    let world = World::with_application_resources::<GameData<'_, '_>, _>("./")?;
+    let mut game = Application::build(StateA, world)?.build(GameDataBuilder::default())?;
     game.run();
     Ok(())
 }

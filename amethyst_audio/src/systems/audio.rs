@@ -14,7 +14,7 @@ use thread_profiler::profile_scope;
 
 use amethyst_core::{
     ecs::prelude::{
-        Entities, Entity, Join, Read, ReadStorage, Resources, System, SystemData, WriteStorage,
+        Entities, Entity, Join, Read, ReadStorage, System, SystemData, World, WriteStorage,
     },
     math::convert,
     transform::Transform,
@@ -32,7 +32,9 @@ pub struct AudioSystem(Output);
 
 impl AudioSystem {
     /// Produces a new AudioSystem that uses the given output.
-    pub fn new(output: Output) -> Self {
+    pub fn new(mut world: &mut World, output: Output) -> Self {
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        world.insert(output.clone());
         AudioSystem(output)
     }
 }
@@ -125,10 +127,5 @@ impl<'a> System<'a> for AudioSystem {
                 }
             }
         }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        Self::SystemData::setup(res);
-        res.insert(self.0.clone());
     }
 }

@@ -7,7 +7,7 @@ use amethyst_derive::{EventReader, PrefabData};
 
 use amethyst_assets::{PrefabData, ProgressCounter};
 use amethyst_core::{
-    ecs::{Component, DenseVecStorage, Entity, Read, Resources, SystemData, WriteStorage},
+    ecs::{Component, DenseVecStorage, Entity, Read, SystemData, World, WriteStorage},
     shrev::{EventChannel, ReaderId},
     EventReader,
 };
@@ -102,14 +102,14 @@ pub enum EnumPrefab {
 mod tests {
     use super::*;
     use amethyst_assets::{AssetStorage, Loader, Prefab, PrefabLoaderSystem};
-    use amethyst_core::ecs::{world::EntitiesRes, Builder, Join};
+    use amethyst_core::ecs::{world::EntitiesRes, Builder, Join, WorldExt};
     use amethyst_test::prelude::*;
 
     macro_rules! assert_prefab {
         ($prefab_type:ident, $prefab:expr, $assertion:expr) => {
             assert!(AmethystApplication::blank()
                 .with_system(
-                    PrefabLoaderSystem::<$prefab_type>::default(),
+                    |world| PrefabLoaderSystem::<$prefab_type>::new(world),
                     "test_loader",
                     &[]
                 )

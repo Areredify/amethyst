@@ -2,7 +2,7 @@
 
 use amethyst::{
     assets::{AssetStorage, Handle, Loader, Processor, ProgressCounter},
-    ecs::{Read, ReadExpect},
+    ecs::{Read, ReadExpect, World, WorldExt},
     locale::*,
     prelude::*,
     utils::application_root_dir,
@@ -27,7 +27,7 @@ impl Example {
 
 impl SimpleState for Example {
     fn on_start(&mut self, data: StateData<'_, GameData<'_, '_>>) {
-        data.world.add_resource(AssetStorage::<Locale>::new());
+        data.world.insert(AssetStorage::<Locale>::new());
         let mut progress_counter = ProgressCounter::default();
         self.handle_en = Some(data.world.exec(
             |(loader, storage): (ReadExpect<'_, Loader>, Read<'_, AssetStorage<Locale>>)| {
@@ -74,11 +74,12 @@ impl SimpleState for Example {
 fn main() -> Result<(), Error> {
     amethyst::start_logger(Default::default());
 
-    let assets_directory = application_root_dir()?.join("examples/assets");
+    let assets_dir = application_root_dir()?.join("examples/assets");
 
+    let world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
     let game_data = GameDataBuilder::default().with(Processor::<Locale>::new(), "proc", &[]);
 
-    let mut game = Application::new(assets_directory, Example::new(), game_data)?;
+    let mut game = Application::new(Example::new(), game_data, world)?;
     game.run();
     Ok(())
 }

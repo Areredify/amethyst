@@ -5,11 +5,11 @@ use amethyst::{
     },
     core::{Transform, TransformBundle},
     derive::PrefabData,
-    ecs::{Entity, ReadExpect, ReadStorage, System, WriteStorage},
+    ecs::{Entity, ReadExpect, ReadStorage, System, World, WorldExt, WriteStorage},
     input::{is_close_requested, is_key_down, InputBundle, StringBindings},
     prelude::{
-        Application, Builder, GameData, GameDataBuilder, SimpleState, SimpleTrans, StateData,
-        StateEvent, Trans,
+        AmethystWorldExt, Application, Builder, GameData, GameDataBuilder, SimpleState,
+        SimpleTrans, StateData, StateEvent, Trans,
     },
     renderer::{
         camera::{Camera, CameraPrefab},
@@ -39,25 +39,34 @@ fn main() -> Result<(), Error> {
 
     let app_dir = amethyst::utils::application_dir("examples")?;
     let display_config_path = app_dir.join("auto_fov/config/display.ron");
-    let assets_directory = app_dir.join("assets");
+    let assets_dir = app_dir.join("assets");
+
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
 
     let game_data = GameDataBuilder::new()
-        .with(PrefabLoaderSystem::<ScenePrefab>::default(), "prefab", &[])
-        .with(AutoFovSystem::default(), "auto_fov", &["prefab"]) // This makes the system adjust the camera right after it has been loaded (in the same frame), preventing any flickering
-        .with(ShowFovSystem, "show_fov", &["auto_fov"])
-        .with_bundle(TransformBundle::new())?
-        .with_bundle(InputBundle::<StringBindings>::new())?
-        .with_bundle(UiBundle::<StringBindings>::new())?
+        .with(
+            PrefabLoaderSystem::<ScenePrefab>::new(&mut world),
+            "prefab",
+            &[],
+        )
+        // This makes the system adjust the camera right after it has been loaded (in the same
+        // frame), preventing any flickering
+        .with(AutoFovSystem::new(&mut world), "auto_fov", &["prefab"])
+        .with(ShowFovSystem::new(&mut world), "show_fov", &["auto_fov"])
         .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(
                     RenderToWindow::from_config_path(display_config_path).with_clear(CLEAR_COLOR),
                 )
                 .with_plugin(RenderShaded3D::default())
                 .with_plugin(RenderUi::default()),
-        )?;
+        )?
+        .with_bundle(&mut world, TransformBundle::new())?
+        .with_bundle(&mut world, InputBundle::<StringBindings>::new())?
+        .with_bundle(&mut world, UiBundle::<StringBindings>::new())?;
 
-    let mut game = Application::build(assets_directory, Loading::new())?.build(game_data)?;
+    let mut game = Application::build(Loading::new(), world)?.build(game_data)?;
     game.run();
 
     Ok(())
@@ -158,6 +167,14 @@ impl SimpleState for Example {
 }
 
 struct ShowFovSystem;
+
+impl ShowFovSystem {
+    pub fn new(world: &mut World) -> Self {
+        use amethyst::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(world);
+        Self
+    }
+}
 
 impl<'a> System<'a> for ShowFovSystem {
     type SystemData = (

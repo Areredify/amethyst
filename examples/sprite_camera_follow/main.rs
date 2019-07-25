@@ -1,7 +1,10 @@
 use amethyst::{
     assets::{AssetStorage, Handle, Loader},
     core::{Named, Parent, Transform, TransformBundle},
-    ecs::{Component, Entity, Join, NullStorage, Read, ReadStorage, System, WriteStorage},
+    ecs::{
+        Component, Entity, Join, NullStorage, Read, ReadStorage, System, World, WorldExt,
+        WriteStorage,
+    },
     input::{is_close_requested, is_key_down, InputBundle, InputHandler, StringBindings},
     prelude::*,
     renderer::{
@@ -198,27 +201,31 @@ fn main() -> amethyst::Result<()> {
         .start();
 
     let app_root = application_root_dir()?;
-    let assets_directory = app_root.join("examples/sprite_camera_follow/assets");
+    let assets_dir = app_root.join("examples/sprite_camera_follow/assets");
     let display_config_path = app_root.join("examples/sprite_camera_follow/config/display.ron");
 
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
+
     let game_data = GameDataBuilder::default()
-        .with_bundle(TransformBundle::new())?
         .with_bundle(
-            InputBundle::<StringBindings>::new().with_bindings_from_file(
-                app_root.join("examples/sprite_camera_follow/config/input.ron"),
-            )?,
-        )?
-        .with(MovementSystem, "movement", &[])
-        .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(
                     RenderToWindow::from_config_path(display_config_path)
                         .with_clear([0.34, 0.36, 0.52, 1.0]),
                 )
                 .with_plugin(RenderFlat2D::default()),
-        )?;
+        )?
+        .with_bundle(&mut world, TransformBundle::new())?
+        .with_bundle(
+            &mut world,
+            InputBundle::<StringBindings>::new().with_bindings_from_file(
+                app_root.join("examples/sprite_camera_follow/config/input.ron"),
+            )?,
+        )?
+        .with(MovementSystem, "movement", &[]);
 
-    let mut game = Application::build(assets_directory, Example)?.build(game_data)?;
+    let mut game = Application::build(Example, world)?.build(game_data)?;
     game.run();
     Ok(())
 }

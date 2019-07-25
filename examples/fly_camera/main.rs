@@ -4,6 +4,7 @@ use amethyst::{
     assets::{PrefabLoader, PrefabLoaderSystem, RonFormat},
     controls::{FlyControlBundle, HideCursor},
     core::transform::TransformBundle,
+    ecs::{World, WorldExt},
     input::{is_key_down, is_mouse_button_down, InputBundle, StringBindings},
     prelude::*,
     renderer::{
@@ -57,15 +58,27 @@ fn main() -> Result<(), Error> {
 
     let app_root = application_root_dir()?;
 
-    let assets_directory = app_root.join("examples/assets");
+    let assets_dir = app_root.join("examples/assets");
 
     let display_config_path = app_root.join("examples/fly_camera/config/display.ron");
 
     let key_bindings_path = app_root.join("examples/fly_camera/config/input.ron");
 
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
+
     let game_data = GameDataBuilder::default()
-        .with(PrefabLoaderSystem::<MyPrefabData>::default(), "", &[])
+        .with(PrefabLoaderSystem::<MyPrefabData>::new(&mut world), "", &[])
         .with_bundle(
+            &mut world,
+            RenderingBundle::<DefaultBackend>::new()
+                .with_plugin(
+                    RenderToWindow::from_config_path(display_config_path)
+                        .with_clear([0.34, 0.36, 0.52, 1.0]),
+                )
+                .with_plugin(RenderShaded3D::default()),
+        )?
+        .with_bundle(
+            &mut world,
             FlyControlBundle::<StringBindings>::new(
                 Some(String::from("move_x")),
                 Some(String::from("move_y")),
@@ -73,20 +86,16 @@ fn main() -> Result<(), Error> {
             )
             .with_sensitivity(0.1, 0.1),
         )?
-        .with_bundle(TransformBundle::new().with_dep(&["fly_movement"]))?
         .with_bundle(
-            InputBundle::<StringBindings>::new().with_bindings_from_file(&key_bindings_path)?,
+            &mut world,
+            TransformBundle::new().with_dep(&["fly_movement"]),
         )?
         .with_bundle(
-            RenderingBundle::<DefaultBackend>::new()
-                .with_plugin(
-                    RenderToWindow::from_config_path(display_config_path)
-                        .with_clear([0.34, 0.36, 0.52, 1.0]),
-                )
-                .with_plugin(RenderShaded3D::default()),
+            &mut world,
+            InputBundle::<StringBindings>::new().with_bindings_from_file(&key_bindings_path)?,
         )?;
 
-    let mut game = Application::build(assets_directory, ExampleState)?.build(game_data)?;
+    let mut game = Application::build(ExampleState, world)?.build(game_data)?;
     game.run();
     Ok(())
 }

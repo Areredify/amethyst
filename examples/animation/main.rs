@@ -4,7 +4,7 @@ use amethyst::{
     animation::*,
     assets::{Loader, PrefabLoader, PrefabLoaderSystem, RonFormat},
     core::{Transform, TransformBundle},
-    ecs::prelude::Entity,
+    ecs::prelude::{Entity, World, WorldExt},
     input::{get_key, is_close_requested, is_key_down},
     prelude::*,
     renderer::{
@@ -221,24 +221,33 @@ fn main() -> amethyst::Result<()> {
 
     let app_root = application_root_dir()?;
     let display_config_path = app_root.join("examples/animation/config/display.ron");
-    let assets_directory = app_root.join("examples/assets/");
+    let assets_dir = app_root.join("examples/assets/");
+
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
 
     let game_data = GameDataBuilder::default()
-        .with(PrefabLoaderSystem::<MyPrefabData>::default(), "", &[])
-        .with_bundle(AnimationBundle::<AnimationId, Transform>::new(
-            "animation_control_system",
-            "sampler_interpolation_system",
-        ))?
-        .with_bundle(TransformBundle::new().with_dep(&["sampler_interpolation_system"]))?
+        .with(PrefabLoaderSystem::<MyPrefabData>::new(&mut world), "", &[])
         .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(
                     RenderToWindow::from_config_path(display_config_path).with_clear(CLEAR_COLOR),
                 )
                 .with_plugin(RenderPbr3D::default()),
+        )?
+        .with_bundle(
+            &mut world,
+            AnimationBundle::<AnimationId, Transform>::new(
+                "animation_control_system",
+                "sampler_interpolation_system",
+            ),
+        )?
+        .with_bundle(
+            &mut world,
+            TransformBundle::new().with_dep(&["sampler_interpolation_system"]),
         )?;
     let state: Example = Default::default();
-    let mut game = Application::new(assets_directory, state, game_data)?;
+    let mut game = Application::new(state, game_data, world)?;
     game.run();
 
     Ok(())

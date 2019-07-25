@@ -1,6 +1,6 @@
 use amethyst_core::{
     ecs::prelude::{
-        BitSet, Component, ComponentEvent, FlaggedStorage, Join, ReadExpect, Resources, System,
+        BitSet, Component, ComponentEvent, FlaggedStorage, Join, ReadExpect, System, World,
         WriteStorage,
     },
     shrev::ReaderId,
@@ -41,17 +41,26 @@ impl Component for UiResize {
 
 /// This system rearranges UI elements whenever the screen is resized using their `UiResize`
 /// component.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct ResizeSystem {
     screen_size: (f32, f32),
-    resize_events_id: Option<ReaderId<ComponentEvent>>,
+    resize_events_id: ReaderId<ComponentEvent>,
     local_modified: BitSet,
 }
 
 impl ResizeSystem {
     /// Creates a new ResizeSystem that listens with the given reader Id.
-    pub fn new() -> ResizeSystem {
-        ResizeSystem::default()
+    pub fn new(mut world: &mut World) -> ResizeSystem {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let screen_size = (0.0, 0.0);
+        let mut resize = WriteStorage::<UiResize>::fetch(&world);
+        let resize_events_id = resize.register_reader();
+        ResizeSystem {
+            screen_size,
+            resize_events_id,
+            local_modified: BitSet::default(),
+        }
     }
 }
 
@@ -70,10 +79,7 @@ impl<'a> System<'a> for ResizeSystem {
 
         let self_local_modified = &mut self.local_modified;
 
-        let self_resize_events_id = self
-            .resize_events_id
-            .as_mut()
-            .expect("`ResizeSystem::setup` was not called before `ResizeSystem::run`");
+        let self_resize_events_id = &mut self.resize_events_id;
         resize
             .channel()
             .read(self_resize_events_id)
@@ -110,13 +116,5 @@ impl<'a> System<'a> for ResizeSystem {
                 }
                 ComponentEvent::Removed(_id) => {}
             });
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        use amethyst_core::ecs::prelude::SystemData;
-        Self::SystemData::setup(res);
-        self.screen_size = (0.0, 0.0);
-        let mut resize = WriteStorage::<UiResize>::fetch(res);
-        self.resize_events_id = Some(resize.register_reader());
     }
 }

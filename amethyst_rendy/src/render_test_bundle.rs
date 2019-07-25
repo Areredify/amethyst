@@ -3,7 +3,7 @@ use std::{marker::PhantomData, ops::Deref, sync::Arc};
 use amethyst_assets::Processor;
 use amethyst_core::{
     bundle::SystemBundle,
-    ecs::{DispatcherBuilder, ReadExpect, Resources, SystemData},
+    ecs::{DispatcherBuilder, ReadExpect, SystemData, World},
 };
 use amethyst_error::Error;
 use derive_new::new;
@@ -51,9 +51,13 @@ impl<'a, 'b, B> SystemBundle<'a, 'b> for RenderEmptyBundle<B>
 where
     B: Backend,
 {
-    fn build(self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
+    fn build(
+        self,
+        world: &mut World,
+        builder: &mut DispatcherBuilder<'a, 'b>,
+    ) -> Result<(), Error> {
         let bundle = RenderingBundle::<B>::new();
-        bundle.build(builder);
+        bundle.build(world, builder);
         Ok(())
     }
 }

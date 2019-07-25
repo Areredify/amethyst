@@ -1,7 +1,7 @@
 use amethyst_core::{
     ecs::{
         Component, DenseVecStorage, Entities, FlaggedStorage, Join, Read, ReadStorage, ReaderId,
-        Resources, System, SystemData, Write, WriteStorage,
+        System, SystemData, World, Write, WriteStorage,
     },
     shrev::EventChannel,
 };
@@ -55,12 +55,25 @@ impl Component for Selected {
 /// System managing the selection of entities.
 /// Reacts to `UiEvent`.
 /// Reacts to Tab and Shift+Tab.
-#[derive(Debug, Default, new)]
+#[derive(Debug)]
 pub struct SelectionKeyboardSystem<G> {
-    #[new(default)]
-    window_reader_id: Option<ReaderId<Event>>,
-    #[new(default)]
+    window_reader_id: ReaderId<Event>,
     phantom: PhantomData<G>,
+}
+
+impl<G> SelectionKeyboardSystem<G>
+where
+    G: Send + Sync + 'static + PartialEq,
+{
+    /// Creates a new `SelectionKeyboardSystem`.
+    pub fn new(mut world: &mut World) -> Self {
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let window_reader_id = world.fetch_mut::<EventChannel<Event>>().register_reader();
+        Self {
+            window_reader_id,
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<'a, G> System<'a> for SelectionKeyboardSystem<G>
@@ -79,6 +92,8 @@ where
         (window_events, cached, mut selecteds, mut ui_events, entities): Self::SystemData,
     ) {
         /*
+        Algorithm in use:
+
         Add clicked elements + shift + ctrl status.
         If tab or shift-tab
             remove clicked buf
@@ -98,7 +113,7 @@ where
 
         // Checks if tab was pressed.
         // TODO: Controller support/Use InputEvent in addition to keys.
-        for event in window_events.read(self.window_reader_id.as_mut().unwrap()) {
+        for event in window_events.read(&mut self.window_reader_id) {
             if let Event::WindowEvent {
                 event:
                     WindowEvent::KeyboardInput {
@@ -156,20 +171,28 @@ where
             }
         }
     }
-
-    fn setup(&mut self, res: &mut Resources) {
-        Self::SystemData::setup(res);
-        self.window_reader_id = Some(res.fetch_mut::<EventChannel<Event>>().register_reader());
-    }
 }
 
 /// System handling the clicks on ui entities and selecting them, if applicable.
-#[derive(Debug, Default, new)]
+#[derive(Debug)]
 pub struct SelectionMouseSystem<G, T: BindingTypes> {
-    #[new(default)]
-    ui_reader_id: Option<ReaderId<UiEvent>>,
-    #[new(default)]
+    ui_reader_id: ReaderId<UiEvent>,
     phantom: PhantomData<(G, T)>,
+}
+
+impl<G, T: BindingTypes> SelectionMouseSystem<G, T>
+where
+    G: Send + Sync + 'static + PartialEq,
+{
+    /// Creates a new `SelectionMouseSystem`.
+    pub fn new(mut world: &mut World) -> Self {
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let ui_reader_id = world.fetch_mut::<EventChannel<UiEvent>>().register_reader();
+        Self {
+            ui_reader_id,
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<'a, G, T: BindingTypes> System<'a> for SelectionMouseSystem<G, T>
@@ -196,7 +219,7 @@ where
         let mut emitted: Vec<UiEvent> = Vec::new();
 
         // Add clicked elements to clicked buffer
-        for ev in ui_events.read(self.ui_reader_id.as_mut().unwrap()) {
+        for ev in ui_events.read(&mut self.ui_reader_id) {
             if let UiEventType::ClickStart = ev.event_type {
                 // Ignore events from elements removed between the event emission and now.
                 if selectables.get(ev.target).is_some() {
@@ -299,9 +322,5 @@ where
         }
 
         ui_events.iter_write(emitted.into_iter());
-    }
-    fn setup(&mut self, res: &mut Resources) {
-        Self::SystemData::setup(res);
-        self.ui_reader_id = Some(res.fetch_mut::<EventChannel<UiEvent>>().register_reader());
     }
 }

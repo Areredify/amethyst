@@ -1,6 +1,10 @@
 use std::marker::PhantomData;
 
-use amethyst_core::{bundle::SystemBundle, ecs::prelude::DispatcherBuilder, math::one};
+use amethyst_core::{
+    bundle::SystemBundle,
+    ecs::prelude::{DispatcherBuilder, World},
+    math::one,
+};
 use amethyst_error::Error;
 use amethyst_input::BindingTypes;
 
@@ -69,9 +73,14 @@ impl<T: BindingTypes> FlyControlBundle<T> {
 }
 
 impl<'a, 'b, T: BindingTypes> SystemBundle<'a, 'b> for FlyControlBundle<T> {
-    fn build(self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
+    fn build(
+        self,
+        world: &mut World,
+        builder: &mut DispatcherBuilder<'a, 'b>,
+    ) -> Result<(), Error> {
         builder.add(
             FlyMovementSystem::<T>::new(
+                world,
                 self.speed,
                 self.right_input_axis,
                 self.up_input_axis,
@@ -81,16 +90,20 @@ impl<'a, 'b, T: BindingTypes> SystemBundle<'a, 'b> for FlyControlBundle<T> {
             &[],
         );
         builder.add(
-            FreeRotationSystem::new(self.sensitivity_x, self.sensitivity_y),
+            FreeRotationSystem::new(world, self.sensitivity_x, self.sensitivity_y),
             "free_rotation",
             &[],
         );
         builder.add(
-            MouseFocusUpdateSystem::new(),
+            MouseFocusUpdateSystem::new(world),
             "mouse_focus",
             &["free_rotation"],
         );
-        builder.add(CursorHideSystem::new(), "cursor_hide", &["mouse_focus"]);
+        builder.add(
+            CursorHideSystem::new(world),
+            "cursor_hide",
+            &["mouse_focus"],
+        );
         Ok(())
     }
 }
@@ -134,19 +147,27 @@ impl<T: BindingTypes> Default for ArcBallControlBundle<T> {
 }
 
 impl<'a, 'b, T: BindingTypes> SystemBundle<'a, 'b> for ArcBallControlBundle<T> {
-    fn build(self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
+    fn build(
+        self,
+        world: &mut World,
+        builder: &mut DispatcherBuilder<'a, 'b>,
+    ) -> Result<(), Error> {
         builder.add(ArcBallRotationSystem::default(), "arc_ball_rotation", &[]);
         builder.add(
-            FreeRotationSystem::new(self.sensitivity_x, self.sensitivity_y),
+            FreeRotationSystem::new(world, self.sensitivity_x, self.sensitivity_y),
             "free_rotation",
             &[],
         );
         builder.add(
-            MouseFocusUpdateSystem::new(),
+            MouseFocusUpdateSystem::new(world),
             "mouse_focus",
             &["free_rotation"],
         );
-        builder.add(CursorHideSystem::new(), "cursor_hide", &["mouse_focus"]);
+        builder.add(
+            CursorHideSystem::new(world),
+            "cursor_hide",
+            &["mouse_focus"],
+        );
         Ok(())
     }
 }

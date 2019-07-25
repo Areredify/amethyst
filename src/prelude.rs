@@ -5,10 +5,11 @@ pub use crate::{
     callback_queue::{Callback, CallbackQueue},
     config::Config,
     core::{SystemExt, WithNamed},
-    ecs::prelude::{Builder, World},
+    ecs::prelude::{Builder, World, WorldExt},
     game_data::{DataInit, GameData, GameDataBuilder},
     state::{
         EmptyState, EmptyTrans, SimpleState, SimpleTrans, State, StateData, Trans, TransEvent,
     },
     state_event::StateEvent,
+    AmethystWorldExt,
 };

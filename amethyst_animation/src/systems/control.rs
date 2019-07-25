@@ -7,7 +7,7 @@ use minterpolate::InterpolationPrimitive;
 use amethyst_assets::{AssetStorage, Handle};
 use amethyst_core::{
     ecs::prelude::{
-        Component, Entities, Entity, Join, Read, ReadStorage, Resources, System, SystemData,
+        Component, Entities, Entity, Join, Read, ReadStorage, System, SystemData, World,
         WriteStorage,
     },
     timing::secs_to_duration,
@@ -47,10 +47,13 @@ where
 
 impl<I, T> AnimationControlSystem<I, T>
 where
-    I: Eq + Hash,
+    I: PartialEq + Eq + Hash + Copy + Send + Sync + 'static,
+    T: AnimationSampling + Component + Clone,
 {
     /// Creates a new `AnimationControlSystem`
-    pub fn new() -> Self {
+    pub fn new(mut world: &mut World) -> Self {
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        ReadStorage::<AnimationSet<I, T>>::setup(&mut world);
         AnimationControlSystem {
             m: marker::PhantomData,
             next_id: 1,
@@ -211,11 +214,6 @@ where
         for entity in remove_sets {
             controls.remove(entity);
         }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        Self::SystemData::setup(res);
-        ReadStorage::<AnimationSet<I, T>>::setup(res);
     }
 }
 

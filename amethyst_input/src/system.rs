@@ -2,7 +2,7 @@
 
 use crate::{BindingTypes, Bindings, InputEvent, InputHandler};
 use amethyst_core::{
-    ecs::prelude::{Read, ReadExpect, Resources, System, Write},
+    ecs::prelude::{Read, ReadExpect, System, World, Write},
     shrev::{EventChannel, ReaderId},
 };
 use amethyst_window::ScreenDimensions;
@@ -17,17 +17,20 @@ use thread_profiler::profile_scope;
 /// and push the results in `EventHandler<InputEvent>`.
 #[derive(Debug)]
 pub struct InputSystem<T: BindingTypes> {
-    reader: Option<ReaderId<Event>>,
+    reader: ReaderId<Event>,
     bindings: Option<Bindings<T>>,
 }
 
 impl<T: BindingTypes> InputSystem<T> {
     /// Create a new input system. Needs a reader id for `EventHandler<winit::Event>`.
-    pub fn new(bindings: Option<Bindings<T>>) -> Self {
-        InputSystem {
-            reader: None,
-            bindings,
+    pub fn new(mut world: &mut World, bindings: Option<Bindings<T>>) -> Self {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let reader = world.fetch_mut::<EventChannel<Event>>().register_reader();
+        if let Some(ref bindings) = bindings {
+            world.fetch_mut::<InputHandler<T>>().bindings = bindings.clone();
         }
+        InputSystem { reader, bindings }
     }
 
     fn process_event(
@@ -53,27 +56,13 @@ impl<'a, T: BindingTypes> System<'a> for InputSystem<T> {
         profile_scope!("input_system");
 
         handler.send_frame_begin();
-        for event in input.read(
-            &mut self
-                .reader
-                .as_mut()
-                .expect("`InputSystem::setup` was not called before `InputSystem::run`"),
-        ) {
+        for event in input.read(&mut self.reader) {
             Self::process_event(
                 event,
                 &mut *handler,
                 &mut *output,
                 screen_dimensions.hidpi_factor() as f32,
             );
-        }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        use amethyst_core::ecs::prelude::SystemData;
-        Self::SystemData::setup(res);
-        self.reader = Some(res.fetch_mut::<EventChannel<Event>>().register_reader());
-        if let Some(ref bindings) = self.bindings {
-            res.fetch_mut::<InputHandler<T>>().bindings = bindings.clone();
         }
     }
 }

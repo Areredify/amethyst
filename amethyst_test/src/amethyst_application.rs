@@ -13,7 +13,6 @@ use amethyst::{
     window::ScreenDimensions,
     StateEventReader,
 };
-use boxfnonce::SendBoxFnOnce;
 use derivative::Derivative;
 use lazy_static::lazy_static;
 
@@ -22,10 +21,11 @@ use crate::{
     ThreadLocalInjectionBundle,
 };
 
-type BundleAddFn = SendBoxFnOnce<
-    'static,
-    (GameDataBuilder<'static, 'static>,),
-    Result<GameDataBuilder<'static, 'static>, Error>,
+type BundleAddFn = Box<
+    dyn FnOnce(
+        &mut World,
+        GameDataBuilder<'static, 'static>,
+    ) -> Result<GameDataBuilder<'static, 'static>, Error>,
 >;
 // Hack: Ideally we want a `SendBoxFnOnce`. However implementing it got too crazy:
 //
@@ -40,7 +40,7 @@ type BundleAddFn = SendBoxFnOnce<
 //   in a scope greater than the `AmethystApplication`'s lifetime, which detracts from the
 //   ergonomics of this test harness.
 type FnResourceAdd = Box<dyn FnMut(&mut World) + Send>;
-type FnState<T, E> = SendBoxFnOnce<'static, (), Box<dyn State<T, E>>>;
+type FnState<T, E> = Box<dyn FnOnce() -> Box<dyn State<T, E>>>;
 
 /// Screen width used in predefined display configuration.
 pub const SCREEN_WIDTH: u32 = 800;
@@ -90,17 +90,25 @@ where
     state_fns: Vec<FnState<T, E>>,
     /// Game data and event type.
     state_data: PhantomData<(T, E, R)>,
+    /// World used for setup.
+    #[derivative(Debug = "ignore")]
+    world: World,
 }
 
 impl AmethystApplication<GameData<'static, 'static>, StateEvent, StateEventReader> {
     /// Returns an Amethyst application without any bundles.
     pub fn blank() -> AmethystApplication<GameData<'static, 'static>, StateEvent, StateEventReader>
     {
+        let assets_dir =
+            AmethystApplication::assets_dir().expect("Failed to get default assets dir.");
+        let world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)
+            .expect("Failed to initialize `World`.");
         AmethystApplication {
             bundle_add_fns: Vec::new(),
             resource_add_fns: Vec::new(),
             state_fns: Vec::new(),
             state_data: PhantomData,
+            world,
         }
     }
 
@@ -136,7 +144,7 @@ where
         for<'b> R: EventReader<'b, Event = E>,
     {
         let params = (self.bundle_add_fns, self.resource_add_fns, self.state_fns);
-        Self::build_internal(params)
+        Self::build_internal(params, self.world)
     }
 
     // Hack to get around `S` or `T` not being `Send`
@@ -153,6 +161,7 @@ where
             Vec<FnResourceAdd>,
             Vec<FnState<GameData<'static, 'static>, E>>,
         ),
+        mut world: World,
     ) -> Result<CoreApplication<'static, GameData<'static, 'static>, E, R>, Error>
     where
         for<'b> R: EventReader<'b, Event = E>,
@@ -160,7 +169,7 @@ where
         let game_data = bundle_add_fns.into_iter().fold(
             Ok(GameDataBuilder::default()),
             |game_data: Result<GameDataBuilder<'_, '_>, Error>, function: BundleAddFn| {
-                game_data.and_then(|game_data| function.call(game_data))
+                game_data.and_then(|game_data| function(&mut world, game_data))
             },
         )?;
 
@@ -168,21 +177,26 @@ where
         state_fns
             .into_iter()
             .rev()
-            .for_each(|state_fn| states.push(state_fn.call()));
-        Self::build_application(SequencerState::new(states), game_data, resource_add_fns)
+            .for_each(|state_fn| states.push(state_fn()));
+        Self::build_application(
+            SequencerState::new(states),
+            game_data,
+            resource_add_fns,
+            world,
+        )
     }
 
     fn build_application<S>(
         first_state: S,
         game_data: GameDataBuilder<'static, 'static>,
         resource_add_fns: Vec<FnResourceAdd>,
+        world: World,
     ) -> Result<CoreApplication<'static, GameData<'static, 'static>, E, R>, Error>
     where
         S: State<GameData<'static, 'static>, E> + 'static,
         for<'b> R: EventReader<'b, Event = E>,
     {
-        let mut application_builder =
-            CoreApplication::build(AmethystApplication::assets_dir()?, first_state)?;
+        let mut application_builder = CoreApplication::build(first_state, world)?;
         {
             let world = &mut application_builder.world;
             for mut function in resource_add_fns {
@@ -201,7 +215,7 @@ where
 
         // `CoreApplication` is `!UnwindSafe`, but wrapping it in a `Mutex` allows us to
         // recover from a panic.
-        let application = Mutex::new(Self::build_internal(params)?);
+        let application = Mutex::new(Self::build_internal(params, self.world)?);
         panic::catch_unwind(move || {
             application
                 .lock()
@@ -253,8 +267,9 @@ where
 
 impl<T, E, R> AmethystApplication<T, E, R>
 where
-    T: GameUpdate,
+    T: GameUpdate + 'static,
     E: Send + Sync + 'static,
+    R: 'static,
 {
     /// Use the specified custom event type instead of `()`.
     ///
@@ -282,6 +297,7 @@ where
             resource_add_fns: self.resource_add_fns,
             state_fns: Vec::new(),
             state_data: PhantomData,
+            world: self.world,
         }
     }
 
@@ -311,8 +327,10 @@ where
         // `SendBoxFnOnce` is an implementation of this.
         //
         // See <https://users.rust-lang.org/t/move-a-boxed-function-inside-a-closure/18199>
-        self.bundle_add_fns.push(SendBoxFnOnce::from(
-            |game_data: GameDataBuilder<'static, 'static>| game_data.with_bundle(bundle),
+        self.bundle_add_fns.push(Box::new(
+            |world: &mut World, game_data: GameDataBuilder<'static, 'static>| {
+                game_data.with_bundle(world, bundle)
+            },
         ));
         self
     }
@@ -330,9 +348,9 @@ where
         FnBundle: FnOnce() -> B + Send + 'static,
         B: SystemBundle<'static, 'static> + 'static,
     {
-        self.bundle_add_fns.push(SendBoxFnOnce::from(
-            move |game_data: GameDataBuilder<'static, 'static>| {
-                game_data.with_bundle(bundle_function())
+        self.bundle_add_fns.push(Box::new(
+            move |world: &mut World, game_data: GameDataBuilder<'static, 'static>| {
+                game_data.with_bundle(world, bundle_function())
             },
         ));
         self
@@ -365,7 +383,7 @@ where
             .push(Box::new(move |world: &mut World| {
                 let resource = resource_opt.take();
                 if resource.is_some() {
-                    world.add_resource(resource.unwrap());
+                    world.insert(resource.unwrap());
                 }
             }));
         self
@@ -383,7 +401,7 @@ where
     {
         // Box up the state
         let closure = move || Box::new((state_fn)()) as Box<dyn State<T, E>>;
-        self.state_fns.push(SendBoxFnOnce::from(closure));
+        self.state_fns.push(Box::new(closure));
         self
     }
 
@@ -391,12 +409,13 @@ where
     ///
     /// # Parameters
     ///
-    /// * `system`: The `System` to register.
+    /// * `system_fn`: Function to instantiate the `System`.
     /// * `name`: Name to register the system with, used for dependency ordering.
     /// * `deps`: Names of systems that must run before this system.
-    pub fn with_system<N, Sys>(self, system: Sys, name: N, deps: &[N]) -> Self
+    pub fn with_system<N, SysFn, Sys>(self, system_fn: SysFn, name: N, deps: &[N]) -> Self
     where
         N: Into<String> + Clone,
+        SysFn: FnOnce(&mut World) -> Sys + Send + Sync + 'static,
         Sys: for<'sys_local> System<'sys_local> + Send + 'static,
     {
         let name = name.into();
@@ -404,34 +423,20 @@ where
             .iter()
             .map(|dep| dep.clone().into())
             .collect::<Vec<String>>();
-        self.with_bundle_fn(move || SystemInjectionBundle::new(system, name, deps))
+        self.with_bundle_fn(move || SystemInjectionBundle::new(system_fn, name, deps))
     }
 
     /// Registers a thread local `System` into this application's `GameData`.
-    ///
-    /// # Parameters
-    ///
-    /// * `system`: The thread local system.
-    pub fn with_thread_local<Sys>(self, system: Sys) -> Self
-    where
-        Sys: for<'sys_local> RunNow<'sys_local> + Send + 'static,
-    {
-        self.with_bundle_fn(move || ThreadLocalInjectionBundle::new(system))
-    }
-
-    /// Registers a thread local `System` into this application's `GameData`.
-    ///
-    /// This is a separate function in case the thread local system is `!Send`.
     ///
     /// # Parameters
     ///
     /// * `system_fn`: Function to instantiate the thread local system.
-    pub fn with_thread_local_fn<FnSysLocal, Sys>(self, system_fn: FnSysLocal) -> Self
+    pub fn with_thread_local<SysFn, Sys>(self, system_fn: SysFn) -> Self
     where
-        FnSysLocal: FnOnce() -> Sys + Send + 'static,
-        Sys: for<'sys_local> RunNow<'sys_local> + 'static,
+        SysFn: FnOnce(&mut World) -> Sys + Send + Sync + 'static,
+        Sys: for<'sys_local> RunNow<'sys_local> + Send + 'static,
     {
-        self.with_bundle_fn(move || ThreadLocalInjectionBundle::new(system_fn()))
+        self.with_bundle_fn(move || ThreadLocalInjectionBundle::new(system_fn))
     }
 
     /// Registers a `System` to run in a `CustomDispatcherState`.
@@ -441,12 +446,13 @@ where
     ///
     /// # Parameters
     ///
-    /// * `system`: The `System` to register.
+    /// * `system_fn`: Function to instantiate the `System`.
     /// * `name`: Name to register the system with, used for dependency ordering.
     /// * `deps`: Names of systems that must run before this system.
-    pub fn with_system_single<N, Sys>(self, system: Sys, name: N, deps: &[N]) -> Self
+    pub fn with_system_single<N, SysFn, Sys>(self, system_fn: SysFn, name: N, deps: &[N]) -> Self
     where
         N: Into<String> + Clone,
+        SysFn: FnOnce(&mut World) -> Sys + Send + Sync + 'static,
         Sys: for<'sys_local> System<'sys_local> + Send + Sync + 'static,
     {
         let name = name.into();
@@ -456,11 +462,7 @@ where
             .collect::<Vec<String>>();
         self.with_state(move || {
             CustomDispatcherStateBuilder::new()
-                .with(
-                    system,
-                    &name,
-                    &deps.iter().map(|dep| dep.as_ref()).collect::<Vec<&str>>(),
-                )
+                .with(system_fn, name, deps)
                 .build()
         })
     }
@@ -651,7 +653,7 @@ mod test {
                 AssetZeroLoader::load(world, AssetZero(20)).unwrap(),
             ];
 
-            world.add_resource::<Vec<AssetZeroHandle>>(handles);
+            world.insert::<Vec<AssetZeroHandle>>(handles);
         };
         let assertion_fn = |world: &mut World| {
             let asset_translation_zero_handles = world.read_resource::<Vec<AssetZeroHandle>>();
@@ -677,7 +679,7 @@ mod test {
     #[test]
     fn execution_order_is_setup_state_effect_assertion() -> Result<(), Error> {
         struct Setup;
-        let setup_fns = |world: &mut World| world.add_resource(Setup);
+        let setup_fns = |world: &mut World| world.insert(Setup);
         let state_fns = || {
             LoadingState::new(FunctionState::new(|world: &mut World| {
                 // Panics if setup is not run before this.
@@ -689,7 +691,7 @@ mod test {
             world.read_resource::<LoadResource>();
 
             let handles = vec![AssetZeroLoader::load(world, AssetZero(10)).unwrap()];
-            world.add_resource(handles);
+            world.insert(handles);
         };
         let assertion_fn = |world: &mut World| {
             let asset_translation_zero_handles = world.read_resource::<Vec<AssetZeroHandle>>();
@@ -730,7 +732,7 @@ mod test {
         let effect_fn = |world: &mut World| {
             let entity = world.create_entity().with(ComponentZero(0)).build();
 
-            world.add_resource(EffectReturn(entity));
+            world.insert(EffectReturn(entity));
         };
 
         fn get_component_zero_value(world: &mut World) -> i32 {
@@ -745,7 +747,7 @@ mod test {
         };
 
         AmethystApplication::blank()
-            .with_system(SystemEffect, "system_effect", &[])
+            .with_system(|_| SystemEffect, "system_effect", &[])
             .with_effect(effect_fn)
             .with_assertion(|world| assert_eq!(1, get_component_zero_value(world)))
             .with_assertion(|world| assert_eq!(2, get_component_zero_value(world)))
@@ -755,8 +757,8 @@ mod test {
     #[test]
     fn with_system_invoked_twice_should_not_panic() {
         AmethystApplication::blank()
-            .with_system(SystemZero, "zero", &[])
-            .with_system(SystemOne, "one", &["zero"]);
+            .with_system(|_| SystemZero, "zero", &[])
+            .with_system(|_| SystemOne, "one", &["zero"]);
     }
 
     #[test]
@@ -778,9 +780,9 @@ mod test {
                 world.register::<ComponentZero>();
 
                 let entity = world.create_entity().with(ComponentZero(0)).build();
-                world.add_resource(EffectReturn(entity));
+                world.insert(EffectReturn(entity));
             })
-            .with_system_single(SystemEffect, "system_effect", &[])
+            .with_system_single(|_| SystemEffect, "system_effect", &[])
             .with_assertion(assertion_fn)
             .with_assertion(assertion_fn)
             .run()
@@ -793,7 +795,7 @@ mod test {
     fn with_setup_invoked_twice_should_run_in_specified_order() -> Result<(), Error> {
         AmethystApplication::blank()
             .with_setup(|world| {
-                world.add_resource(ApplicationResource);
+                world.insert(ApplicationResource);
             })
             .with_setup(|world| {
                 world.read_resource::<ApplicationResource>();
@@ -805,7 +807,7 @@ mod test {
     fn with_effect_invoked_twice_should_run_in_the_specified_order() -> Result<(), Error> {
         AmethystApplication::blank()
             .with_effect(|world| {
-                world.add_resource(ApplicationResource);
+                world.insert(ApplicationResource);
             })
             .with_effect(|world| {
                 world.read_resource::<ApplicationResource>();
@@ -817,7 +819,7 @@ mod test {
     fn with_assertion_invoked_twice_should_run_in_the_specified_order() -> Result<(), Error> {
         AmethystApplication::blank()
             .with_assertion(|world| {
-                world.add_resource(ApplicationResource);
+                world.insert(ApplicationResource);
             })
             .with_assertion(|world| {
                 world.read_resource::<ApplicationResource>();
@@ -830,7 +832,7 @@ mod test {
         AmethystApplication::blank()
             .with_state(|| {
                 FunctionState::new(|world| {
-                    world.add_resource(ApplicationResource);
+                    world.insert(ApplicationResource);
                 })
             })
             .with_state(|| {
@@ -846,7 +848,7 @@ mod test {
         AmethystApplication::blank()
             .with_state(|| {
                 FunctionState::new(|world| {
-                    world.add_resource(ApplicationResource);
+                    world.insert(ApplicationResource);
                 })
             })
             .with_setup(|world| {
@@ -907,7 +909,7 @@ mod test {
         #[test]
         fn audio_zero() -> Result<(), Error> {
             AmethystApplication::blank()
-                .with_bundle(AudioBundle::default())
+                .with_bundle(&mut world, AudioBundle::default())
                 .with_assertion(|world| {
                     world.read_resource::<AssetStorage<Source>>();
                 })
@@ -917,7 +919,7 @@ mod test {
         #[test]
         fn audio_one() -> Result<(), Error> {
             AmethystApplication::blank()
-                .with_bundle(AudioBundle::default())
+                .with_bundle(&mut world, AudioBundle::default())
                 .with_assertion(|world| {
                     world.read_resource::<AssetStorage<Source>>();
                 })
@@ -981,7 +983,7 @@ mod test {
     {
         fn update(&mut self, data: StateData<'_, GameData<'_, '_>>) -> Trans<GameData<'a, 'b>, E> {
             data.data.update(&data.world);
-            data.world.add_resource(LoadResource);
+            data.world.insert(LoadResource);
             Trans::Switch(Box::new(self.next_state.take().unwrap()))
         }
     }
@@ -1039,12 +1041,12 @@ mod test {
         type SystemData = SystemNonDefaultData<'s>;
         fn run(&mut self, _: Self::SystemData) {}
 
-        fn setup(&mut self, res: &mut Resources) {
+        fn setup(&mut self, world: &mut World) {
             // Must be called when we override `.setup()`
-            SystemNonDefaultData::setup(res);
+            SystemNonDefaultData::setup(world);
 
             // Need to manually insert this when the resource is `!Default`
-            res.insert(ApplicationResourceNonDefault);
+            world.insert(ApplicationResourceNonDefault);
         }
     }
 
@@ -1064,7 +1066,11 @@ mod test {
     #[derive(Debug)]
     struct BundleZero;
     impl<'a, 'b> SystemBundle<'a, 'b> for BundleZero {
-        fn build(self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
+        fn build(
+            self,
+            _world: &mut World,
+            builder: &mut DispatcherBuilder<'a, 'b>,
+        ) -> Result<(), Error> {
             builder.add(SystemZero, "system_zero", &[]);
             Ok(())
         }
@@ -1073,7 +1079,11 @@ mod test {
     #[derive(Debug)]
     struct BundleOne;
     impl<'a, 'b> SystemBundle<'a, 'b> for BundleOne {
-        fn build(self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
+        fn build(
+            self,
+            _world: &mut World,
+            builder: &mut DispatcherBuilder<'a, 'b>,
+        ) -> Result<(), Error> {
             builder.add(SystemOne, "system_one", &["system_zero"]);
             builder.add(SystemNonDefault, "system_non_default", &[]);
             Ok(())
@@ -1083,7 +1093,11 @@ mod test {
     #[derive(Debug)]
     struct BundleAsset;
     impl<'a, 'b> SystemBundle<'a, 'b> for BundleAsset {
-        fn build(self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
+        fn build(
+            self,
+            _world: &mut World,
+            builder: &mut DispatcherBuilder<'a, 'b>,
+        ) -> Result<(), Error> {
             builder.add(
                 Processor::<AssetZero>::new(),
                 "asset_translation_zero_processor",

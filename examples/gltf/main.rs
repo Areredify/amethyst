@@ -12,7 +12,7 @@ use amethyst::{
     controls::{ControlTagPrefab, FlyControlBundle},
     core::transform::{Transform, TransformBundle},
     derive::PrefabData,
-    ecs::{Entity, ReadStorage, Write, WriteStorage},
+    ecs::{Entity, ReadStorage, World, Write, WriteStorage},
     input::{is_close_requested, is_key_down, StringBindings, VirtualKeyCode},
     prelude::*,
     renderer::{
@@ -180,47 +180,63 @@ fn main() -> Result<(), amethyst::Error> {
     let app_root = application_root_dir()?;
 
     let display_config_path = app_root.join("examples/gltf/config/display.ron");
-    let assets_directory = app_root.join("examples/assets/");
+    let assets_dir = app_root.join("examples/assets/");
+
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
 
     let game_data = GameDataBuilder::default()
         .with(AutoFovSystem::default(), "auto_fov", &[])
         .with(
-            PrefabLoaderSystem::<ScenePrefabData>::default(),
+            PrefabLoaderSystem::<ScenePrefabData>::new(&mut world),
             "scene_loader",
             &[],
         )
         .with(
-            GltfSceneLoaderSystem::default(),
+            GltfSceneLoaderSystem::new(&mut world),
             "gltf_loader",
             &["scene_loader"], // This is important so that entity instantiation is performed in a single frame.
         )
+        // `VisibilitySortingSystem` (part of `RenderPbr3D`) should depend on:
+        // &["fly_movement", "transform_system", "auto_fov"]
+        //
+        // There is currently no way to pass the dependencies to that system. However, since that
+        // system is thread local as part of rendering, it runs after all of the systems anyway.
         .with_bundle(
-            AnimationBundle::<usize, Transform>::new("animation_control", "sampler_interpolation")
-                .with_dep(&["gltf_loader"]),
-        )?
-        .with_bundle(
-            FlyControlBundle::<StringBindings>::new(None, None, None)
-                .with_sensitivity(0.1, 0.1)
-                .with_speed(5.),
-        )?
-        .with_bundle(TransformBundle::new().with_dep(&[
-            "animation_control",
-            "sampler_interpolation",
-            "fly_movement",
-        ]))?
-        .with_bundle(VertexSkinningBundle::new().with_dep(&[
-            "transform_system",
-            "animation_control",
-            "sampler_interpolation",
-        ]))?
-        .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(RenderToWindow::from_config_path(display_config_path))
                 .with_plugin(RenderPbr3D::default().with_skinning())
                 .with_plugin(RenderSkybox::default()),
+        )?
+        .with_bundle(
+            &mut world,
+            AnimationBundle::<usize, Transform>::new("animation_control", "sampler_interpolation")
+                .with_dep(&["gltf_loader"]),
+        )?
+        .with_bundle(
+            &mut world,
+            FlyControlBundle::<StringBindings>::new(None, None, None)
+                .with_sensitivity(0.1, 0.1)
+                .with_speed(5.),
+        )?
+        .with_bundle(
+            &mut world,
+            TransformBundle::new().with_dep(&[
+                "animation_control",
+                "sampler_interpolation",
+                "fly_movement",
+            ]),
+        )?
+        .with_bundle(
+            &mut world,
+            VertexSkinningBundle::new().with_dep(&[
+                "transform_system",
+                "animation_control",
+                "sampler_interpolation",
+            ]),
         )?;
 
-    let mut game = Application::build(assets_directory, Example::default())?.build(game_data)?;
+    let mut game = Application::build(Example::default(), world)?.build(game_data)?;
     game.run();
     Ok(())
 }

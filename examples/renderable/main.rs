@@ -13,7 +13,7 @@ use amethyst::{
         timing::Time,
         transform::{Transform, TransformBundle},
     },
-    ecs::prelude::{Entity, Join, Read, ReadStorage, System, Write, WriteStorage},
+    ecs::prelude::{Entity, Join, Read, ReadStorage, System, World, WorldExt, Write, WriteStorage},
     input::{
         get_key, is_close_requested, is_key_down, ElementState, InputBundle, StringBindings,
         VirtualKeyCode,
@@ -187,7 +187,7 @@ fn main() -> Result<(), Error> {
     let app_root = application_root_dir()?;
 
     // Add our meshes directory to the asset loader.
-    let assets_directory = app_root.join("examples").join("assets");
+    let assets_dir = app_root.join("examples").join("assets");
 
     let display_config_path = app_root
         .join("examples")
@@ -195,15 +195,13 @@ fn main() -> Result<(), Error> {
         .join("config")
         .join("display.ron");
 
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
+
     let game_data = GameDataBuilder::default()
-        .with(PrefabLoaderSystem::<MyPrefabData>::default(), "", &[])
+        .with(PrefabLoaderSystem::<MyPrefabData>::new(&mut world), "", &[])
         .with::<ExampleSystem>(ExampleSystem::default(), "example_system", &[])
-        .with_bundle(TransformBundle::new().with_dep(&["example_system"]))?
-        .with_bundle(UiBundle::<StringBindings>::new())?
-        .with_bundle(HotReloadBundle::default())?
-        .with_bundle(FpsCounterBundle::default())?
-        .with_bundle(InputBundle::<StringBindings>::new())?
         .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(
                     RenderToWindow::from_config_path(display_config_path)
@@ -211,8 +209,16 @@ fn main() -> Result<(), Error> {
                 )
                 .with_plugin(RenderShaded3D::default())
                 .with_plugin(RenderUi::default()),
-        )?;
-    let mut game = Application::build(assets_directory, Loading::default())?.build(game_data)?;
+        )?
+        .with_bundle(
+            &mut world,
+            TransformBundle::new().with_dep(&["example_system"]),
+        )?
+        .with_bundle(&mut world, UiBundle::<StringBindings>::new())?
+        .with_bundle(&mut world, HotReloadBundle::default())?
+        .with_bundle(&mut world, FpsCounterBundle::default())?
+        .with_bundle(&mut world, InputBundle::<StringBindings>::new())?;
+    let mut game = Application::build(Loading::default(), world)?.build(game_data)?;
     game.run();
     Ok(())
 }

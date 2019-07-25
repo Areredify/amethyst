@@ -7,7 +7,7 @@ use amethyst::{
         shrev::{EventChannel, ReaderId},
         transform::{Transform, TransformBundle},
     },
-    ecs::prelude::{Join, Read, ReadStorage, Resources, System, SystemData, WriteStorage},
+    ecs::prelude::{Join, Read, ReadStorage, System, SystemData, World, WorldExt, WriteStorage},
     input::{
         is_key_down, InputBundle, InputEvent, ScrollDirection, StringBindings, VirtualKeyCode,
     },
@@ -53,12 +53,17 @@ impl SimpleState for ExampleState {
 }
 
 struct CameraDistanceSystem {
-    event_reader: Option<ReaderId<InputEvent<StringBindings>>>,
+    event_reader: ReaderId<InputEvent<StringBindings>>,
 }
 
 impl CameraDistanceSystem {
-    pub fn new() -> Self {
-        CameraDistanceSystem { event_reader: None }
+    pub fn new(mut world: &mut World) -> Self {
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let event_reader = world
+            .fetch_mut::<EventChannel<InputEvent<StringBindings>>>()
+            .register_reader();
+
+        CameraDistanceSystem { event_reader }
     }
 }
 
@@ -70,7 +75,7 @@ impl<'a> System<'a> for CameraDistanceSystem {
     );
 
     fn run(&mut self, (events, transforms, mut tags): Self::SystemData) {
-        for event in events.read(&mut self.event_reader.as_mut().unwrap()) {
+        for event in events.read(&mut self.event_reader) {
             if let InputEvent::MouseWheelMoved(direction) = *event {
                 match direction {
                     ScrollDirection::ScrollUp => {
@@ -88,15 +93,6 @@ impl<'a> System<'a> for CameraDistanceSystem {
             }
         }
     }
-
-    fn setup(&mut self, res: &mut Resources) {
-        Self::SystemData::setup(res);
-
-        self.event_reader = Some(
-            res.fetch_mut::<EventChannel<InputEvent<StringBindings>>>()
-                .register_reader(),
-        );
-    }
 }
 
 fn main() -> Result<(), Error> {
@@ -104,24 +100,17 @@ fn main() -> Result<(), Error> {
 
     let app_root = application_root_dir()?;
 
-    let assets_directory = app_root.join("examples/assets");
+    let assets_dir = app_root.join("examples/assets");
     let display_config_path = app_root.join("examples/arc_ball_camera/config/display.ron");
 
     let key_bindings_path = app_root.join("examples/arc_ball_camera/config/input.ron");
 
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
+
     let game_data = GameDataBuilder::default()
-        .with(PrefabLoaderSystem::<MyPrefabData>::default(), "", &[])
-        .with_bundle(TransformBundle::new().with_dep(&[]))?
+        .with(PrefabLoaderSystem::<MyPrefabData>::new(&mut world), "", &[])
         .with_bundle(
-            InputBundle::<StringBindings>::new().with_bindings_from_file(&key_bindings_path)?,
-        )?
-        .with_bundle(ArcBallControlBundle::<StringBindings>::new())?
-        .with(
-            CameraDistanceSystem::new(),
-            "camera_distance_system",
-            &["input_system"],
-        )
-        .with_bundle(
+            &mut world,
             RenderingBundle::<DefaultBackend>::new()
                 .with_plugin(RenderToWindow::from_config_path(display_config_path))
                 .with_plugin(RenderShaded3D::default())
@@ -129,9 +118,20 @@ fn main() -> Result<(), Error> {
                     Srgb::new(0.82, 0.51, 0.50),
                     Srgb::new(0.18, 0.11, 0.85),
                 )),
-        )?;
+        )?
+        .with_bundle(&mut world, TransformBundle::new().with_dep(&[]))?
+        .with_bundle(
+            &mut world,
+            InputBundle::<StringBindings>::new().with_bindings_from_file(&key_bindings_path)?,
+        )?
+        .with_bundle(&mut world, ArcBallControlBundle::<StringBindings>::new())?
+        .with(
+            CameraDistanceSystem::new(&mut world),
+            "camera_distance_system",
+            &["input_system"],
+        );
 
-    let mut game = Application::build(assets_directory, ExampleState)?.build(game_data)?;
+    let mut game = Application::build(ExampleState, world)?.build(game_data)?;
     game.run();
     Ok(())
 }

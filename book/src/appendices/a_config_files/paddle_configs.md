@@ -52,7 +52,7 @@ and modify the `main.rs`'s `run()` function to add our `PaddleConfig`s.
     .with_resource(pong_config.arena)
     .with_resource(pong_config.ball)
     .with_resource(pong_config.paddles)
-    .with_bundle(PongBundle::default())?
+    .with_bundle(&mut world, PongBundle::default())?
 ```
 
 We add the `PaddlesConfig` to the `World`, rather than as separate `left` and `right` configurations because
@@ -162,7 +162,7 @@ keep the left paddle blue so the final `config.ron` file will be as follows:
 ```
 
 
-[add_resource]: https://docs.rs/specs/0.12.0/specs/struct.World.html#method.add_resource
-[add_with_id]: https://docs.rs/specs/0.12.0/specs/struct.World.html#method.add_resource_with_id
+[add_resource]: https://docs.rs/specs/0.12.0/specs/struct.World.html#method.insert
+[add_with_id]: https://docs.rs/specs/0.12.0/specs/struct.World.html#method.insert_with_id
 
 

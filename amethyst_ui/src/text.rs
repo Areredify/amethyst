@@ -7,7 +7,7 @@ use winit::{ElementState, Event, MouseButton, WindowEvent};
 
 use amethyst_core::{
     ecs::prelude::{
-        Component, DenseVecStorage, Join, Read, ReadExpect, ReadStorage, Resources, System,
+        Component, DenseVecStorage, Join, Read, ReadExpect, ReadStorage, System, World,
         WriteStorage,
     },
     shrev::{EventChannel, ReaderId},
@@ -135,10 +135,10 @@ impl Component for TextEditing {
 }
 
 /// This system processes the underlying UI data as needed.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TextEditingMouseSystem {
     /// A reader for winit events.
-    reader: Option<ReaderId<Event>>,
+    reader: ReaderId<Event>,
     /// This is set to true while the left mouse button is pressed.
     left_mouse_button_pressed: bool,
     /// The screen coordinates of the mouse
@@ -147,9 +147,12 @@ pub struct TextEditingMouseSystem {
 
 impl TextEditingMouseSystem {
     /// Creates a new instance of this system
-    pub fn new() -> Self {
+    pub fn new(mut world: &mut World) -> Self {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let reader = world.fetch_mut::<EventChannel<Event>>().register_reader();
         Self {
-            reader: None,
+            reader,
             left_mouse_button_pressed: false,
             mouse_position: (0., 0.),
         }
@@ -190,11 +193,7 @@ impl<'a> System<'a> for TextEditingMouseSystem {
         }
 
         // Process only if an editable text is selected.
-        for event in events.read(
-            self.reader
-                .as_mut()
-                .expect("`UiKeyboardSystem::setup` was not called before `UiKeyboardSystem::run`"),
-        ) {
+        for event in events.read(&mut self.reader) {
             for (ref mut text, ref mut text_editing, _) in
                 (&mut texts, &mut text_editings, &selecteds).join()
             {
@@ -263,12 +262,6 @@ impl<'a> System<'a> for TextEditingMouseSystem {
                 }
             }
         }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        use amethyst_core::ecs::prelude::SystemData;
-        Self::SystemData::setup(res);
-        self.reader = Some(res.fetch_mut::<EventChannel<Event>>().register_reader());
     }
 }
 

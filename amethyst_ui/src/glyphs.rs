@@ -7,8 +7,8 @@ use crate::{
 use amethyst_assets::{AssetStorage, Handle};
 use amethyst_core::{
     ecs::{
-        Component, DenseVecStorage, Entities, Join, Read, ReadStorage, Resources, System,
-        SystemData, Write, WriteExpect, WriteStorage,
+        Component, DenseVecStorage, Entities, Join, Read, ReadStorage, System, SystemData, World,
+        Write, WriteExpect, WriteStorage,
     },
     Hidden, HiddenPropagate,
 };
@@ -94,7 +94,9 @@ pub struct UiGlyphsSystem<B: Backend> {
 
 impl<B: Backend> UiGlyphsSystem<B> {
     /// Create new UI glyphs system
-    pub fn new() -> Self {
+    pub fn new(mut world: &mut World) -> Self {
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        world.insert(UiGlyphsResource { glyph_tex: None });
         Self {
             glyph_brush: GlyphBrushBuilder::using_fonts(vec![])
                 .initial_cache_size((512, 512))
@@ -102,12 +104,6 @@ impl<B: Backend> UiGlyphsSystem<B> {
             fonts_map: Default::default(),
             marker: PhantomData,
         }
-    }
-}
-
-impl<B: Backend> Default for UiGlyphsSystem<B> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -546,11 +542,6 @@ impl<'a, B: Backend> System<'a> for UiGlyphsSystem<B> {
                 }
             }
         }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        Self::SystemData::setup(res);
-        res.insert(UiGlyphsResource { glyph_tex: None });
     }
 }
 

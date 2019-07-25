@@ -3,7 +3,7 @@ use crate::{
     resources::{HideCursor, WindowFocus},
 };
 use amethyst_core::{
-    ecs::prelude::{Join, Read, ReadExpect, ReadStorage, Resources, System, Write, WriteStorage},
+    ecs::prelude::{Join, Read, ReadExpect, ReadStorage, System, World, Write, WriteStorage},
     math::{convert, Unit, Vector3},
     shrev::{EventChannel, ReaderId},
     timing::Time,
@@ -35,11 +35,14 @@ pub struct FlyMovementSystem<T: BindingTypes> {
 impl<T: BindingTypes> FlyMovementSystem<T> {
     /// Builds a new `FlyMovementSystem` using the provided speeds and axis controls.
     pub fn new(
+        world: &mut World,
         speed: f32,
         right_input_axis: Option<T::Axis>,
         up_input_axis: Option<T::Axis>,
         forward_input_axis: Option<T::Axis>,
     ) -> Self {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(world);
         FlyMovementSystem {
             speed,
             right_input_axis,
@@ -128,16 +131,19 @@ impl<'a> System<'a> for ArcBallRotationSystem {
 pub struct FreeRotationSystem {
     sensitivity_x: f32,
     sensitivity_y: f32,
-    event_reader: Option<ReaderId<Event>>,
+    event_reader: ReaderId<Event>,
 }
 
 impl FreeRotationSystem {
     /// Builds a new `FreeRotationSystem` with the specified mouse sensitivity values.
-    pub fn new(sensitivity_x: f32, sensitivity_y: f32) -> Self {
+    pub fn new(mut world: &mut World, sensitivity_x: f32, sensitivity_y: f32) -> Self {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let event_reader = world.fetch_mut::<EventChannel<Event>>().register_reader();
         FreeRotationSystem {
             sensitivity_x,
             sensitivity_y,
-            event_reader: None,
+            event_reader,
         }
     }
 }
@@ -156,11 +162,7 @@ impl<'a> System<'a> for FreeRotationSystem {
         profile_scope!("free_rotation_system");
 
         let focused = focus.is_focused;
-        for event in
-            events.read(&mut self.event_reader.as_mut().expect(
-                "`FreeRotationSystem::setup` was not called before `FreeRotationSystem::run`",
-            ))
-        {
+        for event in events.read(&mut self.event_reader) {
             if focused && hide.hide {
                 if let Event::DeviceEvent { ref event, .. } = *event {
                     if let DeviceEvent::MouseMotion { delta: (x, y) } = *event {
@@ -177,25 +179,21 @@ impl<'a> System<'a> for FreeRotationSystem {
             }
         }
     }
-
-    fn setup(&mut self, res: &mut Resources) {
-        use amethyst_core::ecs::prelude::SystemData;
-
-        Self::SystemData::setup(res);
-        self.event_reader = Some(res.fetch_mut::<EventChannel<Event>>().register_reader());
-    }
 }
 
 /// A system which reads Events and saves if a window has lost focus in a WindowFocus resource
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MouseFocusUpdateSystem {
-    event_reader: Option<ReaderId<Event>>,
+    event_reader: ReaderId<Event>,
 }
 
 impl MouseFocusUpdateSystem {
     /// Builds a new MouseFocusUpdateSystem.
-    pub fn new() -> MouseFocusUpdateSystem {
-        MouseFocusUpdateSystem::default()
+    pub fn new(mut world: &mut World) -> MouseFocusUpdateSystem {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let event_reader = world.fetch_mut::<EventChannel<Event>>().register_reader();
+        Self { event_reader }
     }
 }
 
@@ -206,9 +204,7 @@ impl<'a> System<'a> for MouseFocusUpdateSystem {
         #[cfg(feature = "profiler")]
         profile_scope!("mouse_focus_update_system");
 
-        for event in events.read(&mut self.event_reader.as_mut().expect(
-            "`MouseFocusUpdateSystem::setup` was not called before `MouseFocusUpdateSystem::run`",
-        )) {
+        for event in events.read(&mut self.event_reader) {
             if let Event::WindowEvent { ref event, .. } = *event {
                 if let WindowEvent::Focused(focused) = *event {
                     focus.is_focused = focused;
@@ -216,25 +212,28 @@ impl<'a> System<'a> for MouseFocusUpdateSystem {
             }
         }
     }
-
-    fn setup(&mut self, res: &mut Resources) {
-        use amethyst_core::ecs::prelude::SystemData;
-        Self::SystemData::setup(res);
-        self.event_reader = Some(res.fetch_mut::<EventChannel<Event>>().register_reader());
-    }
 }
 
 /// System which hides the cursor when the window is focused.
 /// Requires the usage MouseFocusUpdateSystem at the same time.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct CursorHideSystem {
     is_hidden: bool,
 }
 
 impl CursorHideSystem {
     /// Constructs a new CursorHideSystem
-    pub fn new() -> CursorHideSystem {
-        CursorHideSystem { is_hidden: false }
+    pub fn new(mut world: &mut World) -> CursorHideSystem {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let win = world.fetch::<Window>();
+
+        if let Err(err) = win.grab_cursor(true) {
+            log::error!("Unable to grab the cursor. Error: {:?}", err);
+        }
+        win.hide_cursor(true);
+
+        CursorHideSystem { is_hidden: true }
     }
 }
 

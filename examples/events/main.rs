@@ -6,8 +6,9 @@ use amethyst::{
         frame_limiter::FrameRateLimitStrategy,
         shrev::{EventChannel, ReaderId},
     },
-    ecs::{DispatcherBuilder, Read, Resources, System, SystemData, World, Write},
+    ecs::{DispatcherBuilder, Read, System, SystemData, World, Write},
     prelude::*,
+    utils::application_root_dir,
 };
 
 use amethyst::Error;
@@ -17,15 +18,13 @@ use core::result::Result;
 struct MyBundle;
 
 impl<'a, 'b> SystemBundle<'a, 'b> for MyBundle {
-    fn build(self, builder: &mut DispatcherBuilder<'a, 'b>) -> Result<(), Error> {
+    fn build(
+        self,
+        world: &mut World,
+        builder: &mut DispatcherBuilder<'a, 'b>,
+    ) -> Result<(), Error> {
         builder.add(SpammingSystem, "spamming_system", &[]);
-        builder.add(
-            ReceivingSystem {
-                reader: Option::None,
-            },
-            "receiving_system",
-            &[],
-        );
+        builder.add(ReceivingSystem::new(world), "receiving_system", &[]);
         Ok(())
     }
 }
@@ -60,21 +59,24 @@ impl<'a> System<'a> for SpammingSystem {
 }
 
 struct ReceivingSystem {
-    reader: Option<ReaderId<MyEvent>>,
+    reader: ReaderId<MyEvent>,
+}
+
+impl ReceivingSystem {
+    pub fn new(mut world: &mut World) -> Self {
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let reader = world.fetch_mut::<EventChannel<MyEvent>>().register_reader();
+        ReceivingSystem { reader }
+    }
 }
 
 impl<'a> System<'a> for ReceivingSystem {
     type SystemData = Read<'a, EventChannel<MyEvent>>;
 
     fn run(&mut self, my_event_channel: Self::SystemData) {
-        for event in my_event_channel.read(self.reader.as_mut().unwrap()) {
+        for event in my_event_channel.read(&mut self.reader) {
             println!("Received an event: {:?}", event);
         }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        Self::SystemData::setup(res);
-        self.reader = Some(res.fetch_mut::<EventChannel<MyEvent>>().register_reader());
     }
 }
 
@@ -83,12 +85,13 @@ impl SimpleState for GameplayState {}
 fn main() -> amethyst::Result<()> {
     amethyst::start_logger(Default::default());
 
-    let mut world = World::new();
-    world.add_resource(EventChannel::<MyEvent>::new());
+    let assets_dir = application_root_dir()?.join("./");
+    let mut world = World::with_application_resources::<GameData<'_, '_>, _>(assets_dir)?;
+    world.insert(EventChannel::<MyEvent>::new());
 
-    let game_data = GameDataBuilder::default().with_bundle(MyBundle)?;
+    let game_data = GameDataBuilder::default().with_bundle(&mut world, MyBundle)?;
 
-    let mut game = Application::build("./", GameplayState)?
+    let mut game = Application::build(GameplayState, world)?
         .with_frame_limit(FrameRateLimitStrategy::Sleep, 1)
         .build(game_data)?;
 

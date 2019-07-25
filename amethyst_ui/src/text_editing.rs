@@ -8,7 +8,7 @@ use winit::{ElementState, Event, KeyboardInput, ModifiersState, VirtualKeyCode, 
 
 use crate::{LineMode, Selected, TextEditing, UiEvent, UiEventType, UiText};
 use amethyst_core::{
-    ecs::prelude::{Entities, Join, Read, ReadStorage, Resources, System, Write, WriteStorage},
+    ecs::prelude::{Entities, Join, Read, ReadStorage, System, World, Write, WriteStorage},
     shrev::{EventChannel, ReaderId},
 };
 
@@ -17,16 +17,19 @@ use amethyst_core::{
 /// * Adds and removes text.
 /// * Moves selection cursor.
 /// * Grows and shrinks selected text zone.
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct TextEditingInputSystem {
     /// A reader for winit events.
-    reader: Option<ReaderId<Event>>,
+    reader: ReaderId<Event>,
 }
 
 impl TextEditingInputSystem {
     /// Creates a new instance of this system
-    pub fn new() -> Self {
-        Self { reader: None }
+    pub fn new(mut world: &mut World) -> Self {
+        use amethyst_core::ecs::prelude::SystemData;
+        <Self as System<'_>>::SystemData::setup(&mut world);
+        let reader = world.fetch_mut::<EventChannel<Event>>().register_reader();
+        Self { reader }
     }
 }
 
@@ -51,11 +54,7 @@ impl<'a> System<'a> for TextEditingInputSystem {
             }
         }
 
-        for event in events.read(
-            self.reader
-                .as_mut()
-                .expect("`UiKeyboardSystem::setup` was not called before `UiKeyboardSystem::run`"),
-        ) {
+        for event in events.read(&mut self.reader) {
             // Process events for the focused text element
             if let Some((entity, ref mut focused_text, ref mut focused_edit, _)) =
                 (&*entities, &mut texts, &mut editables, &selecteds)
@@ -331,12 +330,6 @@ impl<'a> System<'a> for TextEditingInputSystem {
                 }
             }
         }
-    }
-
-    fn setup(&mut self, res: &mut Resources) {
-        use amethyst_core::ecs::prelude::SystemData;
-        Self::SystemData::setup(res);
-        self.reader = Some(res.fetch_mut::<EventChannel<Event>>().register_reader());
     }
 }
 

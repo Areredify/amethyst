@@ -1,6 +1,6 @@
 use crate::{
     core::{
-        ecs::prelude::{Dispatcher, DispatcherBuilder, RunNow, System, World},
+        ecs::prelude::{Dispatcher, DispatcherBuilder, RunNow, System, World, WorldExt},
         ArcThreadPool, SystemBundle,
     },
     error::Error,
@@ -38,14 +38,14 @@ impl<'a, 'b> GameData<'a, 'b> {
     /// Update game data
     pub fn update(&mut self, world: &World) {
         if let Some(dispatcher) = &mut self.dispatcher {
-            dispatcher.dispatch(&world.res);
+            dispatcher.dispatch(&world);
         }
     }
 
     /// Dispose game data, dropping the dispatcher
-    pub fn dispose(&mut self, world: &mut World) {
+    pub fn dispose(&mut self, mut world: &mut World) {
         if let Some(dispatcher) = self.dispatcher.take() {
-            dispatcher.dispose(&mut world.res);
+            dispatcher.dispose(&mut world);
         }
     }
 }
@@ -228,7 +228,8 @@ impl<'a, 'b> GameDataBuilder<'a, 'b> {
     ///
     /// # Parameters
     ///
-    /// - `bundle`: The bundle to add
+    /// - `world`: The `World` that contains all resources.
+    /// - `bundle`: The bundle to add.
     ///
     /// # Returns
     ///
@@ -241,11 +242,11 @@ impl<'a, 'b> GameDataBuilder<'a, 'b> {
     /// could result in any number of errors.
     /// See each individual bundle for a description of the errors it could produce.
     ///
-    pub fn with_bundle<B>(mut self, bundle: B) -> Result<Self, Error>
+    pub fn with_bundle<B>(mut self, world: &mut World, bundle: B) -> Result<Self, Error>
     where
         B: SystemBundle<'a, 'b>,
     {
-        bundle.build(&mut self.disp_builder)?;
+        bundle.build(world, &mut self.disp_builder)?;
         Ok(self)
     }
 
@@ -276,28 +277,28 @@ impl<'a, 'b> GameDataBuilder<'a, 'b> {
     //                 .with_pass(pass)
     //                 .with_pass(DrawUi::new()),
     //         );
-    //         self.with_bundle(RenderBundle::new(pipe, Some(config)))
+    //         self.with_bundle(&mut world, RenderBundle::new(pipe, Some(config)))
     //     } else {
     //         let pipe = Pipeline::build().with_stage(
     //             Stage::with_backbuffer()
     //                 .clear_target([0.0, 0.0, 0.0, 1.0], 1.0)
     //                 .with_pass(pass),
     //         );
-    //         self.with_bundle(RenderBundle::new(pipe, Some(config)))
+    //         self.with_bundle(&mut world, RenderBundle::new(pipe, Some(config)))
     //     }
     // }
 }
 
 impl<'a, 'b> DataInit<GameData<'a, 'b>> for GameDataBuilder<'a, 'b> {
-    fn build(self, world: &mut World) -> GameData<'a, 'b> {
+    fn build(self, mut world: &mut World) -> GameData<'a, 'b> {
         #[cfg(not(no_threading))]
-        let pool = world.read_resource::<ArcThreadPool>().clone();
+        let pool = (*world.read_resource::<ArcThreadPool>()).clone();
 
         #[cfg(not(no_threading))]
         let mut dispatcher = self.disp_builder.with_pool(pool).build();
         #[cfg(no_threading)]
         let mut dispatcher = self.disp_builder.build();
-        dispatcher.setup(&mut world.res);
+        dispatcher.setup(&mut world);
         GameData::new(dispatcher)
     }
 }
